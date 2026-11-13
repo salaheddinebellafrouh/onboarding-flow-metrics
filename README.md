@@ -21,26 +21,29 @@ git clone https://github.com/salaheddinebellafrouh/onboarding-flow-metrics.git ~
 Paste this and replace the parts in `<>`:
 
 ```
-Run /onboarding-flow-metrics on my Gmail.
+Run /onboarding-flow-metrics on my Gmail and Slack.
 My initials: <XX>
 My clients: <Client 1>, <Client 2>, <Client 3>
-Use the Gmail connector. Read only, do not send or change any email.
-Suggest each client's email domain and search, and let me confirm before you start.
+Inspect every client in the list, in both Gmail and Slack.
+Use the Gmail and Slack connectors. Read only: do not send, post or change anything.
+Suggest each client's email domain, Gmail search and Slack channels,
+and let me confirm before you start.
 When done, show me the per-partner milestone table so I can fix the dates,
 then save the 3 CSVs and give me a 5-bullet summary.
 ```
 
-With Slack (optional), add these lines to the prompt:
+No Slack? Remove "and Slack" from the lines that mention it. Gmail alone still works.
+
+Already know your Slack channels? Add this line so Claude does not have to search:
 
 ```
-Also check Slack for context, read only, do not post anything.
-My Slack channels per client: <Client 1>: #channel-a, #channel-b; <Client 2>: #channel-c
+My Slack channels: <Client 1>: #channel-a, #channel-b; <Client 2>: #channel-c
 ```
 
 ## What happens
 
-1. Claude asks you to confirm each client's email domain and search (and, with Slack, who in the channels is your team, the client or the partner).
-2. It reads your mail (about 10 minutes).
+1. Claude asks you to confirm each client's email domain, search and Slack channels (and who in the channels is your team, the client or the partner).
+2. It reads your mail and Slack for every client (about 10 minutes), then shows how many threads it found per client. A client with nothing found is flagged, not skipped.
 3. It shows a table with one row per trading partner. Fix any wrong dates.
 4. It saves 3 CSVs in `~/orderful-onboarding/_report/` and gives a short summary.
 5. Send those 3 files to your team lead or drop them in the shared folder.

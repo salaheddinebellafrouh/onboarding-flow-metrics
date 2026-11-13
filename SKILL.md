@@ -57,9 +57,11 @@ Reads your mailbox, and for each of your clients and trading partners it records
    - `us`: your team's address patterns (the `.cr@orderful.com` contractor pattern plus your own company domain). Everyone else at `orderful.com` counts as ORDERFUL.
    - `acct`: the Gmail account index of the work mailbox (`u/0`, `u/1`), only used to build links.
 3. **Date range** (optional). Default: all mail. Add `after:2026/01/01` to the queries if wanted.
-4. **Slack (optional, for more context)**: for each client, the Slack channels where the project is discussed (internal `#client-...` channels and shared Slack Connect channels). Add them to `config.json` as `"slackChannels": {"Acme Foods": ["#acme-orderful", "#ext-acme-orderful"]}`. Slack often gives names, not emails, so also add `"people": {"Pat Lee": "US", "Ann Smith": "CLIENT", "Sam Ray": "PARTNER"}` for the regular people in those channels (anyone at Orderful who is not on your team is `ORDERFUL`). Unmapped names show as `UNKNOWN`.
+4. **Slack (optional, for more context)**: for each client, the Slack channels where the project is discussed (internal `#client-...` channels and shared Slack Connect channels). The user does not have to list them: for every client in the list, search Slack channels by the client name, its key word and its domain, suggest the matches, and let the user confirm or add. Add them to `config.json` as `"slackChannels": {"Acme Foods": ["#acme-orderful", "#ext-acme-orderful"]}`. Slack often gives names, not emails, so also add `"people": {"Pat Lee": "US", "Ann Smith": "CLIENT", "Sam Ray": "PARTNER"}` for the regular people in those channels (anyone at Orderful who is not on your team is `ORDERFUL`). Unmapped names show as `UNKNOWN`.
 
 Save `config.json` in a work folder: `~/orderful-onboarding/_report/flow_work_<initials>/`.
+
+**Every client in the list is inspected in every source.** Gmail always, and Slack too when Slack is on. Before building, show a coverage line per client: `client: <n> email threads, <n> Slack threads`. A client with 0 in a source is not dropped silently: widen the search once (client key word alone, domain alone, or a channel search), then tell the user which clients still have nothing.
 
 ## Path A (default): Gmail connector (MCP)
 
@@ -77,7 +79,7 @@ Thread ids from the connector are the same hex ids Gmail uses in links, so `#all
 
 ### A1b (optional). Collect Slack for context
 
-Only if the session has a Slack connector (tools to search messages and read channel or thread history) and the user listed channels. Give each client's channels to a subagent with this brief:
+Only if the session has a Slack connector (tools to search messages and read channel or thread history) and the user asked for Slack. Cover every client in the list, the same ones as Gmail, with the channels confirmed in Inputs step 4. If a client has no channel, also search Slack messages for the client name over the date range so client threads in general channels are not missed. Give each client to a subagent with this brief:
 
 > Read only: never post, reply, react, edit or join. For each channel in `<channels>`, read the history for `<date range>` with the Slack connector, including thread replies. Write ONE JSON line per Slack thread (a parent message plus its replies; a run of loose channel messages on the same day counts as one thread) to `<work folder>/<client-slug>.slack.jsonl`:
 > `{"client":"<Client Name>","source":"slack","thread_id":"slack-<channel id>-<parent ts>","partner":"<trading partner the thread is about, or (general)>","link":"<message permalink if available>","subject":"#<channel>: <first 60 characters of the parent message>","messages":[{"from":"<Name> <email if the tool gives it>","date":"<ISO date-time>","body":"<plain text, first 600 characters>","party":"<US|CLIENT|PARTNER|ORDERFUL if known from the people list, else omit>"}]}`
