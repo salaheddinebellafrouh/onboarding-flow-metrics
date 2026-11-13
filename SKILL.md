@@ -43,19 +43,19 @@ Reads your mailbox, and for each of your clients and trading partners it records
 
 The user does not type initials or client names. Find everything below, then show ONE table and ask "OK, or anything to fix?" before collecting. Run the discovery in one subagent so the subject lists stay out of the main context; it returns only the table.
 
-1. **Initials**, used in file names. Take the mailbox owner's name: the Gmail connector profile tool if there is one, else the `From:` name on one thread from `in:sent`. Initials = first letter of the first and last name, upper case (`Pat Lee` -> `PL`). With only an address, use the letters around the dot (`pat.lee@` -> `PL`).
+1. **Initials**, used in file names. Take the mailbox owner's display name: the Gmail connector profile tool if there is one, else the sender name on the owner's own message in one `in:sent` thread. Initials = first letter of the first and last name, upper case (`Pat Lee` -> `PL`). Do not build them from the address: `pat.cr@orderful.com` is a contractor address, `cr` is not a surname.
 2. **`us`** (your team's addresses): the owner's own domain, unless it is `orderful.com` or a free mail domain; then the owner's own address. Always add `.cr@orderful.com` (contractors). Everyone else at `orderful.com` counts as ORDERFUL.
-3. **Clients.** Run these Gmail searches (subjects only, up to about 300 results each, default the last 18 months):
-   - `subject:"<>" (from:orderful.com OR to:orderful.com OR cc:orderful.com)` (onboarding threads are named "A <> B")
-   - `subject:"Trade Request Update"`
-   - `subject:(kickoff OR "kick-off" OR "kick off" OR onboarding) orderful`
-   - also list the folders in `~/orderful-onboarding/` and, with Slack on, channel names like `#ext-*` / `#client-*` / `#*-orderful`
+3. **Clients.** Collect candidates from four places, then filter (default window: the last 18 months, `newer_than:18m`):
+   - **Trade request emails**: search `subject:"Trade Request Update"` and page through ALL results (it easily passes 300). The subject is `Trade Request Update - <status> (<Client> to <Partner>)`, so the client is the name before " to ". These notices go to the whole team, so they list clients that are not the user's: they give names, not ownership.
+   - **Sent mail**: search `in:sent`, read each thread's participants and count threads per email domain. Domains that are not ours, not `orderful.com`, not free mail and not a known retailer are client (or client consultant) domains.
+   - **Subjects with "<>", "x Orderful", "kickoff", "onboarding", "Notes:", "Invitation:"** from a broad `orderful` search. Gmail ignores `<>` in a search, so filter for it in the subject text, never in the query. "Orderful <> X" means X is a client. In "X <> Y" the client is the side that shows up with several different partners.
+   - The folders in `~/orderful-onboarding/` and, with Slack on, channel names like `#ext-*` / `#client-*` / `#*-orderful`. Folders catch clients with no trade request in the window.
 
-   Rules to pick clients from the subjects:
-   - "Orderful <> X" or "X <> Orderful": X is a client.
-   - "X <> Y": the client is the side that shows up with several different partners ("Acme Foods <> Walmart", "Acme Foods <> Target" -> Acme Foods). Names that show up across several different clients (Walmart, Target, Home Depot, Lowe's, Amazon, Kroger, SPS...) are trading partners, not clients.
-   - Merge spellings of the same company and keep the full name as it appears in subjects ("Northwind Retail Inc.", not "NRI"). Its first word of 3+ letters is used to tell which side of "Client <> Partner" is the partner.
-   - Keep clients with 3+ threads. List the rest under "maybe" in the table so the user can add them.
+   Then:
+   - Merge variants into one client: trailing ids and qualifiers (`Anagram Australia (004)`, `Kai USA 5036827168`, `Every Man Jack (only VAN)`, `Dude Wipes lV`) and the matching domain. Keep the full name as it appears in subjects ("Northwind Retail Inc.", not "NRI"). Its first word of 3+ letters tells which side of "Client <> Partner" is the partner.
+   - Names that show up across several different clients (Walmart, Target, Home Depot, Lowe's, Amazon, Kroger, Costco, UNFI, SPS, TrueCommerce...) are trading partners or networks, not clients. A consultant domain (a NetSuite partner, a bookkeeper) is not a client either: it is an extra domain of the client it writes about.
+   - **Ownership test**: count real conversation threads per candidate with `"<name>" -subject:"Trade Request Update" -subject:"Relationship Status Update" -subject:"Transaction Status" -from:no-reply -from:noreply -from:notifications newer_than:18m` (one page is enough). 5+ threads: a client. 1 to 4: list under "maybe". 0: drop. Adding `from:me OR to:me` does not help: team mail reaches everyone, so it filters nothing.
+   - The user's OK on the table is the final word on ownership: a teammate's client can pass the thread test if the user is copied on it.
 4. **Client domains.** For each client, read 2 or 3 of its threads and take the most common sender domain that is not ours, not `orderful.com`, not a free mail domain and not a known partner's. Add the client's NetSuite consultant or 3PL domain if they write for the client. Domains matter: anything that is not ours, not `orderful.com` and not a client domain counts as the PARTNER.
 5. **Gmail search per client**: `"<Client Name>" OR <domain>` (add more domains with OR).
 6. **Slack channels** (only when Slack is on): for every client, search Slack channels by the client name, its key word and its domain. If a client has no channel, its Slack threads are found later by a message search for the client name. Slack often gives names, not emails, so also map the regular people in those channels to `US`, `CLIENT`, `PARTNER` or `ORDERFUL` from their email or title where the Slack tool shows it; unmapped names show as `UNKNOWN`.
@@ -126,7 +126,7 @@ Use only if the connector does not work. Load the Chrome tools in one ToolSearch
 
 1. `navigate` to `https://mail.google.com/mail/u/<acct>/#inbox` and check the tab title shows the work address.
 2. Wait about 5 seconds, then inject the full text of `flow_core.js`, then the full text of `gmail_extract.js`, each with `javascript_tool`. The second returns `{ready: true}`; if not, reload and retry.
-3. Discover first (Inputs above): `OFM.discover(['subject:"<>" (from:orderful.com OR to:orderful.com OR cc:orderful.com)', 'subject:"Trade Request Update"', 'subject:(kickoff OR "kick-off" OR "kick off" OR onboarding) orderful'])`, poll `OFM.state` until `phase` is `done`, then read `OFM.subjects` (in chunks if long) and pick clients with the rules above. For domains, `await OFM.parse('<thread id>')` on 2 or 3 threads per client. After the user's OK:
+3. Discover first (Inputs above): `OFM.discover(['subject:"Trade Request Update" newer_than:18m', 'in:sent newer_than:18m', 'orderful newer_than:18m'], 20)`, poll `OFM.state` until `phase` is `done`, then read `OFM.subjects` (in chunks if long) and pick clients with the rules above. For domains, `await OFM.parse('<thread id>')` on 2 or 3 threads per client. After the user's OK:
 4. Set config and start (runs in the background; each tool call times out at 45 seconds, so never await the job):
    ```js
    OFM.cfg = {us: ['.cr@orderful.com', '@yourcompany.com'], clientDomains: {...}, maxWait: 30}
