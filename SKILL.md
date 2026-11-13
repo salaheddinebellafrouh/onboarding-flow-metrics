@@ -27,7 +27,7 @@ Reads your mailbox, and for each of your clients and trading partners it records
 1. **Read only.** Never send, reply, draft, forward, label, archive, mark or delete any email, in either path. In Slack, never post, reply, react, edit or join channels; only read channels the user is already in.
 2. **No email or Slack text in outputs.** CSVs and summaries carry dates, counts, company names, topic tags and links only. Never paste email bodies into the shared files or into a PR.
 3. **The raw JSONL thread files stay local.** They contain email and Slack text: keep them in the user's own work folder, never in the skills repo or a shared folder. Offer to delete them once the CSVs are built.
-4. **Confirm the client list and client domains with the user before collecting.** Wrong domains silently turn client replies into "partner" replies.
+4. **Find the client list, domains and initials yourself, then get one OK from the user before collecting.** Never ask the user to type them. Wrong domains silently turn client replies into "partner" replies, which is why the OK is still needed.
 5. **Confirm milestones with the user** (Step 3) before saving the partner table; the regex guesses are a starting point, not the answer.
 6. **Do not change Gmail or connector settings** to make the skill work. If the connector is broken, use the Chrome path or stop.
 
@@ -39,25 +39,45 @@ Reads your mailbox, and for each of your clients and trading partners it records
 | `build_metrics.cjs` | Node script for the Gmail connector path: turns saved threads into the CSVs + a summary. |
 | `gmail_extract.js` | Chrome fallback: reads Gmail in the browser when the connector does not work. |
 
-## Inputs (ask, then confirm)
+## Inputs (found automatically, the user only confirms)
 
-1. **Your initials**, used in file names.
-2. **Your clients**: name, a Gmail search for each, and the client's email domains. Suggest these from `~/orderful-onboarding/<client>/` folders and ask the user to confirm. Example `config.json`:
-   ```json
-   {
-     "us": [".cr@orderful.com", "@yourcompany.com"],
-     "clientDomains": {"Acme Foods": ["acmefoods.com"], "Widget Co": ["widgetco.com"]},
-     "queries": {"Acme Foods": "\"Acme Foods\" OR acmefoods.com", "Widget Co": "\"Widget Co\" OR widgetco.com"},
-     "maxWait": 30,
-     "acct": "0"
-   }
-   ```
-   - Use the client name as it appears in Orderful email subjects ("Northwind Retail Inc.", not "NRI"). Its first word of 3+ letters is used to tell which side of "Client <> Partner" is the partner.
-   - Client domains matter: anything that is not ours, not `orderful.com` and not a client domain counts as the PARTNER. Add the client's NetSuite consultant or 3PL domain if they act for the client.
-   - `us`: your team's address patterns (the `.cr@orderful.com` contractor pattern plus your own company domain). Everyone else at `orderful.com` counts as ORDERFUL.
-   - `acct`: the Gmail account index of the work mailbox (`u/0`, `u/1`), only used to build links.
-3. **Date range** (optional). Default: all mail. Add `after:2026/01/01` to the queries if wanted.
-4. **Slack (optional, for more context)**: for each client, the Slack channels where the project is discussed (internal `#client-...` channels and shared Slack Connect channels). The user does not have to list them: for every client in the list, search Slack channels by the client name, its key word and its domain, suggest the matches, and let the user confirm or add. Add them to `config.json` as `"slackChannels": {"Acme Foods": ["#acme-orderful", "#ext-acme-orderful"]}`. Slack often gives names, not emails, so also add `"people": {"Pat Lee": "US", "Ann Smith": "CLIENT", "Sam Ray": "PARTNER"}` for the regular people in those channels (anyone at Orderful who is not on your team is `ORDERFUL`). Unmapped names show as `UNKNOWN`.
+The user does not type initials or client names. Find everything below, then show ONE table and ask "OK, or anything to fix?" before collecting. Run the discovery in one subagent so the subject lists stay out of the main context; it returns only the table.
+
+1. **Initials**, used in file names. Take the mailbox owner's name: the Gmail connector profile tool if there is one, else the `From:` name on one thread from `in:sent`. Initials = first letter of the first and last name, upper case (`Pat Lee` -> `PL`). With only an address, use the letters around the dot (`pat.lee@` -> `PL`).
+2. **`us`** (your team's addresses): the owner's own domain, unless it is `orderful.com` or a free mail domain; then the owner's own address. Always add `.cr@orderful.com` (contractors). Everyone else at `orderful.com` counts as ORDERFUL.
+3. **Clients.** Run these Gmail searches (subjects only, up to about 300 results each, default the last 18 months):
+   - `subject:"<>" (from:orderful.com OR to:orderful.com OR cc:orderful.com)` (onboarding threads are named "A <> B")
+   - `subject:"Trade Request Update"`
+   - `subject:(kickoff OR "kick-off" OR "kick off" OR onboarding) orderful`
+   - also list the folders in `~/orderful-onboarding/` and, with Slack on, channel names like `#ext-*` / `#client-*` / `#*-orderful`
+
+   Rules to pick clients from the subjects:
+   - "Orderful <> X" or "X <> Orderful": X is a client.
+   - "X <> Y": the client is the side that shows up with several different partners ("Acme Foods <> Walmart", "Acme Foods <> Target" -> Acme Foods). Names that show up across several different clients (Walmart, Target, Home Depot, Lowe's, Amazon, Kroger, SPS...) are trading partners, not clients.
+   - Merge spellings of the same company and keep the full name as it appears in subjects ("Northwind Retail Inc.", not "NRI"). Its first word of 3+ letters is used to tell which side of "Client <> Partner" is the partner.
+   - Keep clients with 3+ threads. List the rest under "maybe" in the table so the user can add them.
+4. **Client domains.** For each client, read 2 or 3 of its threads and take the most common sender domain that is not ours, not `orderful.com`, not a free mail domain and not a known partner's. Add the client's NetSuite consultant or 3PL domain if they write for the client. Domains matter: anything that is not ours, not `orderful.com` and not a client domain counts as the PARTNER.
+5. **Gmail search per client**: `"<Client Name>" OR <domain>` (add more domains with OR).
+6. **Slack channels** (only when Slack is on): for every client, search Slack channels by the client name, its key word and its domain. If a client has no channel, its Slack threads are found later by a message search for the client name. Slack often gives names, not emails, so also map the regular people in those channels to `US`, `CLIENT`, `PARTNER` or `ORDERFUL` from their email or title where the Slack tool shows it; unmapped names show as `UNKNOWN`.
+7. **`acct`**: the Gmail account index of the work mailbox (`u/0`, `u/1`), only used to build links. **Date range**: all mail unless the user says otherwise.
+
+The table to confirm:
+
+| client | domains | email threads | Slack channels |
+|---|---|---|---|
+
+with the initials above it and the "maybe" list under it. Then write `config.json`:
+```json
+{
+  "us": [".cr@orderful.com", "@yourcompany.com"],
+  "clientDomains": {"Acme Foods": ["acmefoods.com"], "Widget Co": ["widgetco.com"]},
+  "queries": {"Acme Foods": "\"Acme Foods\" OR acmefoods.com", "Widget Co": "\"Widget Co\" OR widgetco.com"},
+  "slackChannels": {"Acme Foods": ["#acme-orderful", "#ext-acme-orderful"]},
+  "people": {"Pat Lee": "US", "Ann Smith": "CLIENT", "Sam Ray": "PARTNER"},
+  "maxWait": 30,
+  "acct": "0"
+}
+```
 
 Save `config.json` in a work folder: `~/orderful-onboarding/_report/flow_work_<initials>/`.
 
@@ -79,7 +99,7 @@ Thread ids from the connector are the same hex ids Gmail uses in links, so `#all
 
 ### A1b (optional). Collect Slack for context
 
-Only if the session has a Slack connector (tools to search messages and read channel or thread history) and the user asked for Slack. Cover every client in the list, the same ones as Gmail, with the channels confirmed in Inputs step 4. If a client has no channel, also search Slack messages for the client name over the date range so client threads in general channels are not missed. Give each client to a subagent with this brief:
+Only if the session has a Slack connector (tools to search messages and read channel or thread history) and the user asked for Slack. Cover every client in the list, the same ones as Gmail, with the channels confirmed in Inputs step 6. If a client has no channel, also search Slack messages for the client name over the date range so client threads in general channels are not missed. Give each client to a subagent with this brief:
 
 > Read only: never post, reply, react, edit or join. For each channel in `<channels>`, read the history for `<date range>` with the Slack connector, including thread replies. Write ONE JSON line per Slack thread (a parent message plus its replies; a run of loose channel messages on the same day counts as one thread) to `<work folder>/<client-slug>.slack.jsonl`:
 > `{"client":"<Client Name>","source":"slack","thread_id":"slack-<channel id>-<parent ts>","partner":"<trading partner the thread is about, or (general)>","link":"<message permalink if available>","subject":"#<channel>: <first 60 characters of the parent message>","messages":[{"from":"<Name> <email if the tool gives it>","date":"<ISO date-time>","body":"<plain text, first 600 characters>","party":"<US|CLIENT|PARTNER|ORDERFUL if known from the people list, else omit>"}]}`
@@ -106,14 +126,15 @@ Use only if the connector does not work. Load the Chrome tools in one ToolSearch
 
 1. `navigate` to `https://mail.google.com/mail/u/<acct>/#inbox` and check the tab title shows the work address.
 2. Wait about 5 seconds, then inject the full text of `flow_core.js`, then the full text of `gmail_extract.js`, each with `javascript_tool`. The second returns `{ready: true}`; if not, reload and retry.
-3. Set config and start (runs in the background; each tool call times out at 45 seconds, so never await the job):
+3. Discover first (Inputs above): `OFM.discover(['subject:"<>" (from:orderful.com OR to:orderful.com OR cc:orderful.com)', 'subject:"Trade Request Update"', 'subject:(kickoff OR "kick-off" OR "kick off" OR onboarding) orderful'])`, poll `OFM.state` until `phase` is `done`, then read `OFM.subjects` (in chunks if long) and pick clients with the rules above. For domains, `await OFM.parse('<thread id>')` on 2 or 3 threads per client. After the user's OK:
+4. Set config and start (runs in the background; each tool call times out at 45 seconds, so never await the job):
    ```js
    OFM.cfg = {us: ['.cr@orderful.com', '@yourcompany.com'], clientDomains: {...}, maxWait: 30}
    OFM.collect({'Acme Foods': '"Acme Foods" OR acmefoods.com', ...}, 4)
    ```
-4. Poll with `await OFM.sleep(40000); OFM.state` until `phase` is `done`. A client with 0 threads in `log` usually means the page was not settled; re-run `OFM.collect` for that client. About 600 threads take about 10 minutes.
-5. `OFM.build()` returns counts and the summary. Read rows with `OFM.chunk('threads', 0, 150)` and `OFM.chunk('waits', 0, 150)` (then 150, 300, ... until empty) and write them, header first, to `~/orderful-onboarding/_report/flow_threads_<initials>_<date>.csv` and `flow_waits_<initials>_<date>.csv`.
-6. Close the tab with `tabs_close_mcp`.
+5. Poll with `await OFM.sleep(40000); OFM.state` until `phase` is `done`. A client with 0 threads in `log` usually means the page was not settled; re-run `OFM.collect` for that client. About 600 threads take about 10 minutes.
+6. `OFM.build()` returns counts and the summary. Read rows with `OFM.chunk('threads', 0, 150)` and `OFM.chunk('waits', 0, 150)` (then 150, 300, ... until empty) and write them, header first, to `~/orderful-onboarding/_report/flow_threads_<initials>_<date>.csv` and `flow_waits_<initials>_<date>.csv`.
+7. Close the tab with `tabs_close_mcp`.
 
 ## Step 3: per-partner milestones (check with the user)
 

@@ -110,6 +110,26 @@
     return 'started';
   };
 
+  // Background job: run discovery searches and keep only subjects, so the skill can find the client list itself.
+  // O.subjects = [{q, lid, subj}], de-duplicated by thread.
+  O.discover = (queries, pages = 6) => {
+    O.state = { phase: 'discover', log: [] };
+    O.subjects = [];
+    const seen = new Set();
+    (async () => {
+      for (const q of queries) {
+        try {
+          let r = await O.search(q, pages);
+          if (!r.length) r = await O.search(q, pages);
+          r.forEach((x) => { if (x.lid && !seen.has(x.lid)) { seen.add(x.lid); O.subjects.push({ q, lid: x.lid, subj: x.subj }); } });
+          O.state.log.push(q.slice(0, 40) + ':' + r.length);
+        } catch (e) { O.state.log.push(q.slice(0, 40) + ':ERR ' + e); }
+      }
+      O.state.phase = 'done';
+    })();
+    return 'started';
+  };
+
   // Build the CSVs with the shared core. Returns row counts and the normal-flow summary.
   O.build = () => {
     const C = O.core();
