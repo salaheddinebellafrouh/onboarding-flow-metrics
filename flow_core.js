@@ -51,8 +51,8 @@
       vendor_setup: /vendor (number|#|id)|account number|vendor setup|registration/i,
     };
 
-    // First word of 3+ letters of the client name, used to match subjects.
-    C.key = (client) => (client || '').toLowerCase().split(/\s+/).find((w) => w.length >= 3) || (client || '').toLowerCase();
+    // First word of 3+ letters of the client name ("the", "and" skipped), used to match subjects.
+    C.key = (client) => (client || '').toLowerCase().split(/\s+/).find((w) => w.length >= 3 && !/^(the|and)$/.test(w)) || (client || '').toLowerCase();
 
     // Pick the side of "A <> B" that is not the client; "Orderful <> Client" is a general client thread.
     C.otherSide = (a, b, client) => {
