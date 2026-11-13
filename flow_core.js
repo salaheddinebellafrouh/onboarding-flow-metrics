@@ -1,19 +1,27 @@
 // Copyright (c) 2026 Orderful, Inc.
 /* global window */
 // Shared analysis for the onboarding-flow-metrics skill.
-// Works in Node (require) and in the browser (window.OFMCore). No email text leaves this file's output:
-// the CSVs hold dates, counts, company names, topic tags and Gmail thread links only.
+// Works in Node (require) and in the browser (window.OFMCore). No message text leaves this file's output:
+// the CSVs hold dates, counts, company names, topic tags and Gmail/Slack links only.
 //
-// Input: threads = [{ client, lid, subj, msgs: [{ name, em, dt (ms epoch), body }] }]
-// cfg   = { us: ['.cr@orderful.com', '@yourcompany.com'], clientDomains: { Client: ['client.com'] }, maxWait: 30, acct: '0' }
+// Input: threads = [{ client, lid, subj, partner?, source ('email' default | 'slack'), link?, msgs: [{ name, em, dt (ms epoch), body, party? }] }]
+// cfg   = { us: ['.cr@orderful.com', '@yourcompany.com'], clientDomains: { Client: ['client.com'] },
+//           people: { 'full name': 'US' | 'CLIENT' | 'PARTNER' | 'ORDERFUL' }, maxWait: 30, acct: '0' }
+// Slack messages often carry no email, so a message can set `party` itself, or be matched by name in cfg.people.
 
 (function (root) {
   function core(cfg) {
-    cfg = Object.assign({ us: ['.cr@orderful.com', '@yourcompany.com'], clientDomains: {}, maxWait: 30, acct: '0' }, cfg || {});
+    cfg = Object.assign({ us: ['.cr@orderful.com', '@yourcompany.com'], clientDomains: {}, people: {}, maxWait: 30, acct: '0' }, cfg || {});
+    const people = Object.fromEntries(Object.entries(cfg.people).map(([k, v]) => [k.toLowerCase().trim(), v]));
     const C = {};
 
     C.party = (m, client) => {
+      if (m.party) return m.party === 'SKIP' ? null : m.party;
       const e = (m.em || '').toLowerCase();
+      if (!e.includes('@')) {
+        const byName = people[(m.name || e).toLowerCase().trim()];
+        return byName || 'UNKNOWN'; // Slack user with no email and no mapping: add them to cfg.people
+      }
       if (cfg.us.some((u) => e.includes(u))) return 'US';
       if (/(google\.com|slack\.com|read\.ai|zoom\.us|calendar|mailer-daemon|zohodesk-noreply)/.test(e)) return null;
       if (/^(The EDI Support Team has received|Thank you for contacting|Your request \d+ has been updated|Hello\s.{0,40}Your ticket has been auto-closed|Out of Office|Automatic reply|I will be out of the office)/i.test(m.body || '')) return null;
@@ -71,8 +79,8 @@
     const iso = (t) => new Date(t).toISOString().slice(0, 10);
     const csv = (v) => { v = v == null ? '' : String(v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
 
-    C.WAIT_COLS = ['client', 'partner', 'thread_id', 'step', 'asked_by', 'waited_on', 'asked_date', 'answered_date', 'days', 'chasers', 'exception', 'topics'];
-    C.THREAD_COLS = ['client', 'partner', 'thread_id', 'subject_short', 'step', 'first_date', 'last_date', 'days_open', 'emails', 'our_chasers', 'trade_request', 'mentions_test_sent', 'mentions_live', 'gmail_link'];
+    C.WAIT_COLS = ['client', 'partner', 'thread_id', 'step', 'asked_by', 'waited_on', 'asked_date', 'answered_date', 'days', 'chasers', 'exception', 'topics', 'source', 'slack_msgs_during_wait'];
+    C.THREAD_COLS = ['client', 'partner', 'thread_id', 'subject_short', 'step', 'first_date', 'last_date', 'days_open', 'emails', 'our_chasers', 'trade_request', 'mentions_test_sent', 'mentions_live', 'gmail_link', 'source'];
 
     // Returns { waits: [rowObj], threads: [rowObj], csv: { waits: [lines], threads: [lines] } }
     C.build = (threads) => {
@@ -81,7 +89,8 @@
         if (!p || !p.msgs || !p.msgs.length) continue;
         if (/^(automatic reply|out of office|auto.?reply|recall:)/i.test(p.subj)) continue;
         const client = p.client;
-        const partner = C.partnerOf(p, client);
+        const source = p.source || 'email';
+        const partner = p.partner || C.partnerOf(p, client);
         const st = C.step(p.subj);
         const ms = p.msgs.map((m) => Object.assign({}, m, { pt: C.party(m, client) })).filter((m) => m.pt && m.dt).sort((a, b) => a.dt - b.dt);
         const tr = (p.subj.match(/Trade Request Update - (\w+)/) || [])[1] || '';
@@ -99,6 +108,7 @@
                 chasers: run.filter((m, j) => j > 0 && (m.dt - run[j - 1].dt) / 864e5 >= 1).length,
                 exception: d > cfg.maxWait ? 'Y' : '',
                 topics: Object.entries(C.topics).filter(([, re]) => re.test(txt)).map(([k]) => k).join('|'),
+                source, _from: run[0].dt, _to: ms[i].dt,
               });
             }
             rs = i;
@@ -113,8 +123,22 @@
           our_chasers: ourChasers, trade_request: tr,
           mentions_test_sent: /(sent|send|resent|uploaded).{0,30}test|test (file|po|850|856|810|order).{0,30}(sent|received)/i.test(all) ? 'Y' : '',
           mentions_live: /(went|is now|are now|now) live|in production|moved to production|go-live (is )?complete|certification (is )?complete|testing (is )?complete/i.test(all) ? 'Y' : '',
-          gmail_link: `https://mail.google.com/mail/u/${cfg.acct}/#all/${p.lid}`,
+          gmail_link: p.link || (source === 'email' ? `https://mail.google.com/mail/u/${cfg.acct}/#all/${p.lid}` : ''),
+          source,
         });
+      }
+      // Slack context: how many Slack messages for the same client fell inside each email wait of 3+ days.
+      // A high count means work was moving in Slack, so the email gap was not a real stall.
+      const slackTimes = {};
+      for (const p of threads) {
+        if (!p || p.source !== 'slack') continue;
+        for (const m of p.msgs || []) if (m.dt) (slackTimes[p.client] = slackTimes[p.client] || []).push(m.dt);
+      }
+      const hasSlack = Object.keys(slackTimes).length > 0;
+      for (const w of waits) {
+        w.slack_msgs_during_wait = hasSlack && w.source === 'email' && w.days >= 3
+          ? (slackTimes[w.client] || []).filter((t) => t > w._from && t < w._to).length : '';
+        delete w._from; delete w._to;
       }
       const toCsv = (rows, cols) => [cols.join(',')].concat(rows.map((r) => cols.map((c) => csv(r[c])).join(',')));
       return { waits, threads: trows, csv: { waits: toCsv(waits, C.WAIT_COLS), threads: toCsv(trows, C.THREAD_COLS) } };
@@ -128,7 +152,10 @@
         const q = (f) => s[Math.min(s.length - 1, Math.floor(f * (s.length - 1)))];
         return { n: a.length, median: q(0.5), p75: q(0.75), share_3d_plus: Math.round((100 * a.filter((x) => x >= 3).length) / a.length) + '%' };
       };
-      const norm = waits.filter((w) => w.exception !== 'Y');
+      // Email only, so numbers stay comparable with the email baseline; Slack is reported as context.
+      const norm = waits.filter((w) => w.exception !== 'Y' && w.source !== 'slack');
+      const slackRows = waits.filter((w) => w.source === 'slack');
+      const slowWithSlack = norm.filter((w) => w.days >= 3 && w.slack_msgs_during_wait !== '');
       const by = {}, topicDays = {};
       norm.forEach((w) => {
         (by[w.waited_on] = by[w.waited_on] || []).push(w.days);
@@ -138,9 +165,12 @@
       const totalDays = norm.reduce((a, w) => a + w.days, 0);
       return {
         exchanges: norm.length,
-        exceptions_over_max: waits.length - norm.length,
+        exceptions_over_max: waits.filter((w) => w.exception === 'Y').length,
         reply_days_by_party: Object.fromEntries(Object.entries(by).map(([k, v]) => [k, stats(v)])),
         slow_replies_share_of_wait_days: totalDays ? Math.round((100 * slow.reduce((a, w) => a + w.days, 0)) / totalDays) + '%' : 'n/a',
+        slack_exchanges: slackRows.length,
+        slow_email_waits_checked_against_slack: slowWithSlack.length,
+        slow_email_waits_with_slack_activity: slowWithSlack.filter((w) => w.slack_msgs_during_wait > 0).length,
         wait_days_by_topic: Object.fromEntries(Object.entries(topicDays).sort((a, b) => b[1] - a[1]).map(([k, v]) => [k, Math.round(v)])),
       };
     };

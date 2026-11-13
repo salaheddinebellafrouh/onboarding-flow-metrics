@@ -24,9 +24,9 @@ Reads your mailbox, and for each of your clients and trading partners it records
 
 ## Behaviour rules
 
-1. **Read only.** Never send, reply, draft, forward, label, archive, mark or delete any email, in either path.
-2. **No email text in outputs.** CSVs and summaries carry dates, counts, company names, topic tags and links only. Never paste email bodies into the shared files or into a PR.
-3. **The raw JSONL thread files stay local.** They contain email text: keep them in the user's own work folder, never in the skills repo or a shared folder. Offer to delete them once the CSVs are built.
+1. **Read only.** Never send, reply, draft, forward, label, archive, mark or delete any email, in either path. In Slack, never post, reply, react, edit or join channels; only read channels the user is already in.
+2. **No email or Slack text in outputs.** CSVs and summaries carry dates, counts, company names, topic tags and links only. Never paste email bodies into the shared files or into a PR.
+3. **The raw JSONL thread files stay local.** They contain email and Slack text: keep them in the user's own work folder, never in the skills repo or a shared folder. Offer to delete them once the CSVs are built.
 4. **Confirm the client list and client domains with the user before collecting.** Wrong domains silently turn client replies into "partner" replies.
 5. **Confirm milestones with the user** (Step 3) before saving the partner table; the regex guesses are a starting point, not the answer.
 6. **Do not change Gmail or connector settings** to make the skill work. If the connector is broken, use the Chrome path or stop.
@@ -57,6 +57,7 @@ Reads your mailbox, and for each of your clients and trading partners it records
    - `us`: your team's address patterns (the `.cr@orderful.com` contractor pattern plus your own company domain). Everyone else at `orderful.com` counts as ORDERFUL.
    - `acct`: the Gmail account index of the work mailbox (`u/0`, `u/1`), only used to build links.
 3. **Date range** (optional). Default: all mail. Add `after:2026/01/01` to the queries if wanted.
+4. **Slack (optional, for more context)**: for each client, the Slack channels where the project is discussed (internal `#client-...` channels and shared Slack Connect channels). Add them to `config.json` as `"slackChannels": {"Acme Foods": ["#acme-orderful", "#ext-acme-orderful"]}`. Slack often gives names, not emails, so also add `"people": {"Pat Lee": "US", "Ann Smith": "CLIENT", "Sam Ray": "PARTNER"}` for the regular people in those channels (anyone at Orderful who is not on your team is `ORDERFUL`). Unmapped names show as `UNKNOWN`.
 
 Save `config.json` in a work folder: `~/orderful-onboarding/_report/flow_work_<initials>/`.
 
@@ -74,13 +75,26 @@ Reading hundreds of threads fills the context, so **give each client to its own 
 
 Thread ids from the connector are the same hex ids Gmail uses in links, so `#all/<thread_id>` links work.
 
+### A1b (optional). Collect Slack for context
+
+Only if the session has a Slack connector (tools to search messages and read channel or thread history) and the user listed channels. Give each client's channels to a subagent with this brief:
+
+> Read only: never post, reply, react, edit or join. For each channel in `<channels>`, read the history for `<date range>` with the Slack connector, including thread replies. Write ONE JSON line per Slack thread (a parent message plus its replies; a run of loose channel messages on the same day counts as one thread) to `<work folder>/<client-slug>.slack.jsonl`:
+> `{"client":"<Client Name>","source":"slack","thread_id":"slack-<channel id>-<parent ts>","partner":"<trading partner the thread is about, or (general)>","link":"<message permalink if available>","subject":"#<channel>: <first 60 characters of the parent message>","messages":[{"from":"<Name> <email if the tool gives it>","date":"<ISO date-time>","body":"<plain text, first 600 characters>","party":"<US|CLIENT|PARTNER|ORDERFUL if known from the people list, else omit>"}]}`
+> Skip bot and app messages (join notices, integrations, reminders). Write the file with a script or the Write tool. Report only: threads written per channel and any errors.
+
+What Slack adds:
+- Slack threads become rows like email threads (`source = slack`), so reply times and topics include Slack work.
+- Every email wait of 3+ days gets `slack_msgs_during_wait`: how many Slack messages for that client fell inside the wait. A high count means the work was moving in Slack, so that email gap was not a real stall.
+- The printed summary keeps reply-time numbers **email only** (comparable with the baseline below) and reports Slack as context: `slack_exchanges`, `slow_email_waits_with_slack_activity`.
+
 ### A2. Build the CSVs
 
 ```bash
 node skills/onboarding-flow-metrics/build_metrics.cjs --in ~/orderful-onboarding/_report/flow_work_<initials> --config ~/orderful-onboarding/_report/flow_work_<initials>/config.json --who <initials>
 ```
 
-It writes `flow_waits_<initials>_<date>.csv` and `flow_threads_<initials>_<date>.csv` to `~/orderful-onboarding/_report/` and prints a summary (normal-flow reply times per party, share of slow replies, wait days by topic). `bad_lines` above 0 means a JSONL line was malformed; fix or re-collect that client.
+It reads every `*.jsonl` in the folder (email and Slack), writes `flow_waits_<initials>_<date>.csv` and `flow_threads_<initials>_<date>.csv` to `~/orderful-onboarding/_report/` and prints a summary (normal-flow reply times per party, share of slow replies, wait days by topic). `bad_lines` above 0 means a JSONL line was malformed; fix or re-collect that client.
 
 Then go to Step 3.
 
@@ -122,20 +136,23 @@ From the printed summary and the partner table, about 5 short bullets:
 - top 3 topics by wait days
 - typical days and emails per trading partner, start to live
 - the exceptions (waits over 30 days), each with its thread link and one line on why (PTO, handoff, partner silent)
+- if Slack was collected: how many slow email waits had Slack activity during them (those were probably not real stalls)
 
 No em dashes in anything written for others.
 
 ## Columns (fixed, so everyone's files can be combined)
 
-**flow_waits**: `client, partner, thread_id, step, asked_by, waited_on, asked_date, answered_date, days, chasers, exception, topics`
+**flow_waits**: `client, partner, thread_id, step, asked_by, waited_on, asked_date, answered_date, days, chasers, exception, topics, source, slack_msgs_during_wait`
 - `step`: CONNECT, TEST, GOLIVE, LIVE_ISSUE, GENERAL, from the subject
-- `asked_by` / `waited_on`: US, ORDERFUL, CLIENT, PARTNER
+- `asked_by` / `waited_on`: US, ORDERFUL, CLIENT, PARTNER (UNKNOWN for unmapped Slack names)
 - `days`: from the first message of the asking turn to the first answer, so chaser time is included
 - `chasers`: extra messages the asker sent at least a day apart before getting an answer
 - `exception`: Y when `days` is over `maxWait`
 - `topics`: test_data, test_files, edi_ids, connection, mapping, decision, labels, ns_ids, items, portal, vendor_setup
+- `source`: email or slack
+- `slack_msgs_during_wait`: for email waits of 3+ days when Slack was collected, the number of Slack messages for that client during the wait; empty otherwise
 
-**flow_threads**: `client, partner, thread_id, subject_short, step, first_date, last_date, days_open, emails, our_chasers, trade_request, mentions_test_sent, mentions_live, gmail_link`
+**flow_threads**: `client, partner, thread_id, subject_short, step, first_date, last_date, days_open, emails, our_chasers, trade_request, mentions_test_sent, mentions_live, gmail_link, source` (`gmail_link` holds the Slack permalink for Slack rows)
 
 **flow_partners**: `client, partner, start, trade_request_accepted, first_test, go_live_or_state, emails, days_start_to_live`
 
@@ -151,7 +168,8 @@ Everyone drops their three CSVs in one shared folder. Concatenate each type, kee
 
 ## Known limits
 
-- Email only. Work in Slack, calls or the Orderful app does not show, so some gaps look longer than they were.
+- Without the optional Slack step, work done in Slack does not show. Calls and work in the Orderful app never show, so some gaps look longer than they were.
+- Slack threads are grouped by the collecting agent; loose channel chatter is grouped per day, so Slack reply times are rougher than email ones.
 - Days are calendar days.
 - Topic tags are keyword based and overlap. Use them for ranking, not exact totals.
 - A thread found under two clients is counted under the first one.

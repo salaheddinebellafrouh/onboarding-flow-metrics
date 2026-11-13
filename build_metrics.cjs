@@ -5,9 +5,11 @@
 // Usage:
 //   node build_metrics.cjs --in <dir with *.jsonl> --config <config.json> --who <initials> [--out <dir>]
 //
-// Each JSONL line is one thread:
+// Each JSONL line is one thread (email or Slack):
 //   {"client":"Acme Foods","thread_id":"18c0ffee00000001","subject":"...",
 //    "messages":[{"from":"Pat Lee <pat@widgetco.com>","date":"2026-10-28T02:02:00Z","body":"..."}]}
+// Slack lines add "source":"slack" and optionally "link" and "partner" (the trading partner the thread is about); a Slack message may carry "party":"US|CLIENT|PARTNER|ORDERFUL"
+//   when the Slack tool gives no email for the sender (or map names in config "people").
 // config.json: {"us":[".cr@orderful.com","@yourcompany.com"],"clientDomains":{"Acme Foods":["acmefoods.com"]},"maxWait":30,"acct":"0"}
 
 const fs = require('fs');
@@ -48,8 +50,8 @@ for (const f of files) {
     let t;
     try { t = JSON.parse(line); } catch { bad++; continue; }
     if (!t.thread_id || seen.has(t.thread_id)) continue; // first client wins, like the Chrome path
-    const msgs = (t.messages || []).map((m) => ({ name: nameOf(m.from), em: emailOf(m.from), dt: +new Date(m.date), body: clean(m.body) })).filter((m) => m.dt);
-    seen.set(t.thread_id, { client: t.client, lid: t.thread_id, subj: t.subject || '', msgs });
+    const msgs = (t.messages || []).map((m) => ({ name: nameOf(m.from), em: emailOf(m.from), dt: +new Date(m.date), body: clean(m.body), party: m.party })).filter((m) => m.dt);
+    seen.set(t.thread_id, { client: t.client, lid: t.thread_id, subj: t.subject || '', partner: t.partner, source: t.source === 'slack' ? 'slack' : 'email', link: t.link, msgs });
   }
 }
 
